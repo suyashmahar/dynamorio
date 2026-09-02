@@ -1,5 +1,6 @@
 /* **********************************************************
  * Copyright (c) 2026 Arm Limited All rights reserved.
+ * Copyright (c) 2026 Meta Platforms, Inc.  All rights reserved.
  * **********************************************************/
 
 /*
@@ -203,10 +204,12 @@ ptrace_set_sigmask(thread_id_t tid, const kernel_sigset_t *mask)
 }
 
 bool
-ptrace_unmask_signal(thread_id_t tid, int sig)
+ptrace_unmask_signal(thread_id_t tid, int sig, bool *was_blocked)
 {
     kernel_sigset_t mask;
 
+    ASSERT(was_blocked != NULL);
+    *was_blocked = false;
     if (sig <= 0 || sig > MAX_SIGNUM)
         return false;
     if (!ptrace_get_sigmask(tid, &mask))
@@ -215,6 +218,7 @@ ptrace_unmask_signal(thread_id_t tid, int sig)
         kernel_sigdelset(&mask, sig);
         if (!ptrace_set_sigmask(tid, &mask))
             return false;
+        *was_blocked = true;
     }
     return true;
 }

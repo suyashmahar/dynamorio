@@ -1,5 +1,6 @@
 /* **********************************************************
  * Copyright (c) 2026 Arm Limited All rights reserved.
+ * Copyright (c) 2026 Meta Platforms, Inc.  All rights reserved.
  * **********************************************************/
 
 /*
@@ -58,7 +59,7 @@ bool
 ptrace_set_sigmask(thread_id_t tid, const kernel_sigset_t *mask);
 
 bool
-ptrace_unmask_signal(thread_id_t tid, int sig);
+ptrace_unmask_signal(thread_id_t tid, int sig, bool *was_blocked);
 
 #    if defined(AARCH64) && defined(DR_HOST_AARCH64)
 #        include <sys/uio.h>

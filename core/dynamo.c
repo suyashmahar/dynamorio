@@ -1,5 +1,6 @@
 /* **********************************************************
  * Copyright (c) 2010-2026 Google, Inc.  All rights reserved.
+ * Copyright (c) 2026 Meta Platforms, Inc.  All rights reserved.
  * Copyright (c) 2000-2010 VMware, Inc.  All rights reserved.
  * **********************************************************/
 
@@ -3001,6 +3002,10 @@ dynamorio_take_over_threads(dcontext_t *dcontext)
         if (DYNAMO_OPTION(sleep_between_takeovers))
             os_thread_sleep(1);
     } while (found_threads && attempts < max_takeover_attempts);
+#ifdef PTRACE_TAKEOVER_SUPPORTED
+    if (DYNAMO_OPTION(attach_unmask_suspend_signal))
+        os_unmask_suspend_signal_via_ptrace_cleanup();
+#endif
     os_process_under_dynamorio_complete(dcontext);
 
     instrument_post_attach_event();

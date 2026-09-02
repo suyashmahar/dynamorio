@@ -1,5 +1,6 @@
 /* ****************************************************
  * Copyright (c) 2026 Arm Limited. All rights reserved.
+ * Copyright (c) 2026 Meta Platforms, Inc.  All rights reserved.
  * ***************************************************/
 
 /*
@@ -36,8 +37,9 @@
  *  sigwait syscalls. Two threads are created:
  * - sig_thread: all signals are masked and blocked and thread waits in
  *               sigwaitinfo().
- * - busy_thread: no signals are masked and the thread just runs without being
- *                 blocked in any sigwait syscall.
+ * - busy_thread: SIGILL is masked and the thread just runs without being
+ *                blocked in any sigwait syscall. It verifies its mask while
+ *                DynamoRIO is running and again after detach.
  */
 
 #include "configure.h"
@@ -48,6 +50,7 @@
 
 #include <errno.h>
 #include <signal.h>
+#include <stdatomic.h>
 #ifdef LINUX
 #    include <sys/syscall.h>
 #    include <unistd.h>
@@ -55,8 +58,26 @@
 
 static void *signals_blocked;
 static void *busy_started;
-static volatile bool busy_stop;
 static pid_t busy_tid;
+
+enum {
+    BUSY_WAITING,
+    BUSY_CHECK_WHILE_TRACING,
+    BUSY_CHECKED_WHILE_TRACING,
+    BUSY_CHECK_AFTER_DETACH,
+};
+
+static atomic_int busy_state;
+
+static void
+check_sigill_blocked(void)
+{
+    sigset_t mask;
+    int res = pthread_sigmask(SIG_BLOCK, NULL, &mask);
+    assert(res == 0);
+    res = sigismember(&mask, SIGILL);
+    assert(res == 1);
+}
 
 static THREAD_FUNC_RETURN_TYPE
 sig_thread(void *arg)
@@ -90,6 +111,14 @@ sig_thread(void *arg)
 static THREAD_FUNC_RETURN_TYPE
 busy_thread(void *arg)
 {
+    sigset_t mask;
+    int res = sigemptyset(&mask);
+    assert(res == 0);
+    res = sigaddset(&mask, SIGILL);
+    assert(res == 0);
+    res = pthread_sigmask(SIG_BLOCK, &mask, NULL);
+    assert(res == 0);
+
 #ifdef LINUX
     busy_tid = (pid_t)syscall(SYS_gettid);
     print("busy_thread starting (tid=%d)\n", busy_tid);
@@ -97,9 +126,14 @@ busy_thread(void *arg)
     print("busy_thread starting\n");
 #endif
     signal_cond_var(busy_started);
-    while (!busy_stop) {
+    while (atomic_load(&busy_state) != BUSY_CHECK_WHILE_TRACING) {
         thread_yield();
     }
+    check_sigill_blocked();
+    atomic_store(&busy_state, BUSY_CHECKED_WHILE_TRACING);
+    while (atomic_load(&busy_state) != BUSY_CHECK_AFTER_DETACH)
+        thread_yield();
+    check_sigill_blocked();
     print("busy_thread exiting\n");
     return NULL;
 }
@@ -133,9 +167,9 @@ main(int argc, const char *argv[])
     dr_app_setup_and_start();
     assert(dr_app_running_under_dynamorio());
 
-    print("stopping busy_thread\n");
-    busy_stop = true;
-    join_thread(busy);
+    atomic_store(&busy_state, BUSY_CHECK_WHILE_TRACING);
+    while (atomic_load(&busy_state) != BUSY_CHECKED_WHILE_TRACING)
+        thread_yield();
 
     print("sending SIGUSR1 to sig_thread\n");
     pthread_kill(thread, SIGUSR1);
@@ -144,6 +178,10 @@ main(int argc, const char *argv[])
     print("pre-DR stop\n");
     dr_app_stop_and_cleanup();
     assert(!dr_app_running_under_dynamorio());
+
+    print("stopping busy_thread\n");
+    atomic_store(&busy_state, BUSY_CHECK_AFTER_DETACH);
+    join_thread(busy);
 
     destroy_cond_var(signals_blocked);
     destroy_cond_var(busy_started);

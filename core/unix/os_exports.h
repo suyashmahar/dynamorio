@@ -1,5 +1,6 @@
 /* **********************************************************
  * Copyright (c) 2011-2026 Google, Inc.  All rights reserved.
+ * Copyright (c) 2026 Meta Platforms, Inc.  All rights reserved.
  * Copyright (c) 2000-2010 VMware, Inc.  All rights reserved.
  * **********************************************************/
 
@@ -496,6 +497,16 @@ typedef struct _kernel_sigset_t {
     unsigned int sig[_NSIG_WORDS];
 #endif
 } kernel_sigset_t;
+
+static inline void
+kernel_sigaddset(kernel_sigset_t *set, int _sig)
+{
+    uint sig = _sig - 1;
+    if (_NSIG_WORDS == 1)
+        set->sig[0] |= 1UL << sig;
+    else
+        set->sig[sig / _NSIG_BPW] |= 1UL << (sig % _NSIG_BPW);
+}
 
 static inline void
 kernel_sigdelset(kernel_sigset_t *set, int _sig)

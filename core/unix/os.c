@@ -1,5 +1,6 @@
 /* *******************************************************************************
  * Copyright (c) 2010-2026 Google, Inc.  All rights reserved.
+ * Copyright (c) 2026 Meta Platforms, Inc.  All rights reserved.
  * Copyright (c) 2011 Massachusetts Institute of Technology  All rights reserved.
  * Copyright (c) 2000-2010 VMware, Inc.  All rights reserved.
  * Copyright (c) 2025 Foundation of Research and Technology, Hellas.
@@ -10985,6 +10986,7 @@ typedef struct _takeover_record_t {
     thread_id_t tid;
     event_t event;
     void *ptrace_cleanup;
+    bool suspend_signal_was_blocked;
 } takeover_record_t;
 
 /* When attempting thread takeover, we store an array of thread id and event
@@ -11044,6 +11046,20 @@ ptrace_takeover_record_present(thread_id_t tid)
     }
     return false;
 }
+
+#ifdef PTRACE_TAKEOVER_SUPPORTED
+static bool
+ptrace_takeover_record_suspend_signal_was_blocked(thread_id_t tid)
+{
+    if (thread_takeover_records == NULL)
+        return false;
+    for (uint i = 0; i < num_thread_takeover_records; i++) {
+        if (thread_takeover_records[i].tid == tid)
+            return thread_takeover_records[i].suspend_signal_was_blocked;
+    }
+    return false;
+}
+#endif
 
 thread_id_t *
 os_list_threads_by_pid(dcontext_t *dcontext, process_id_t pid, uint *num_threads_out)
@@ -11226,8 +11242,11 @@ os_take_over_all_unknown_threads(dcontext_t *dcontext)
             records[i].tid = tids[i];
             records[i].event = create_event();
             records[i].ptrace_cleanup = NULL;
+            records[i].suspend_signal_was_blocked = false;
 #ifdef PTRACE_TAKEOVER_SUPPORTED
             if (DYNAMO_OPTION(attach_unmask_suspend_signal)) {
+                records[i].suspend_signal_was_blocked =
+                    ptrace_suspend_signal_was_blocked(records[i].tid);
                 if (use_ptrace == NULL) {
                     use_ptrace = HEAP_ARRAY_ALLOC(dcontext, byte, threads_to_signal,
                                                   ACCT_THREAD_MGT, PROTECTED);
@@ -11239,6 +11258,10 @@ os_take_over_all_unknown_threads(dcontext_t *dcontext)
                 bool in_set = false;
                 if (thread_in_sigtimedwait(records[i].tid, suspend_signum, &in_set) &&
                     in_set) {
+                    /* A signal waited on by sigtimedwait was blocked before the
+                     * syscall, even if ptrace exposes its temporary wait mask.
+                     */
+                    records[i].suspend_signal_was_blocked = true;
                     use_ptrace[i] = 1;
                     ptrace_tids[ptrace_count++] = records[i].tid;
                 }
@@ -11500,6 +11523,7 @@ os_thread_take_over(priv_mcontext_t *mc, kernel_sigset_t *sigset)
 {
     dcontext_t *dcontext;
     priv_mcontext_t *dc_mc;
+    kernel_sigset_t app_sigset;
 #ifdef PTRACE_TAKEOVER_SUPPORTED
     void *pt_param = NULL;
 #endif
@@ -11525,7 +11549,15 @@ os_thread_take_over(priv_mcontext_t *mc, kernel_sigset_t *sigset)
         dcontext = get_thread_private_dcontext();
         ASSERT(dcontext != NULL);
     }
-    signal_set_mask(dcontext, sigset);
+    app_sigset = *sigset;
+#ifdef PTRACE_TAKEOVER_SUPPORTED
+    /* Restore the application-visible bit that the ptrace attach helper cleared.
+     * Keep the signal frame unchanged so an early-return retry stays unblocked.
+     */
+    if (ptrace_takeover_record_suspend_signal_was_blocked(get_sys_thread_id()))
+        kernel_sigaddset(&app_sigset, suspend_signum);
+#endif
+    signal_set_mask(dcontext, &app_sigset);
     signal_swap_mask(dcontext, true /*to app*/);
     dynamo_thread_under_dynamo(dcontext);
     dc_mc = get_mcontext(dcontext);

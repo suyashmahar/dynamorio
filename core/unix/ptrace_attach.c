@@ -1,5 +1,6 @@
 /* **********************************************************
  * Copyright (c) 2026 Arm Limited All rights reserved.
+ * Copyright (c) 2026 Meta Platforms, Inc.  All rights reserved.
  * **********************************************************/
 
 /*
@@ -81,6 +82,13 @@ typedef struct _ptrace_unmask_state_t {
     int suspend_sig;
     bool success;
 } ptrace_unmask_state_t;
+
+/* This list is written by the ptrace helper and read by the takeover thread
+ * after the helper's done event is signaled.  It lives only for one attach.
+ */
+static thread_id_t *suspend_signal_blocked_tids;
+static uint num_suspend_signal_blocked_tids;
+static uint suspend_signal_blocked_tids_capacity;
 
 typedef struct _ptrace_takeover_param_t {
     priv_mcontext_t mc;
@@ -195,16 +203,27 @@ ptrace_unmask_all_threads(void *param)
 
     tids = os_list_threads_by_pid(dcontext, state->target_pid, &num_threads);
     if (tids != NULL) {
+        if (num_threads > 0) {
+            suspend_signal_blocked_tids = (thread_id_t *)global_heap_alloc(
+                num_threads * sizeof(thread_id_t) HEAPACCT(ACCT_THREAD_MGT));
+            suspend_signal_blocked_tids_capacity = num_threads;
+        }
         for (uint i = 0; i < num_threads; i++) {
             thread_id_t tid = tids[i];
+            bool was_blocked;
             if (tid == state->skip_tid)
                 continue;
             if (!ptrace_attach_and_stop(tid, NULL))
                 continue;
 
             any_tids_attempted = true;
-            if (!ptrace_unmask_signal(tid, state->suspend_sig))
+            if (!ptrace_unmask_signal(tid, state->suspend_sig, &was_blocked)) {
                 any_tids_failed = true;
+            } else if (was_blocked) {
+                ASSERT(num_suspend_signal_blocked_tids <
+                       suspend_signal_blocked_tids_capacity);
+                suspend_signal_blocked_tids[num_suspend_signal_blocked_tids++] = tid;
+            }
 
             ptrace_detach(tid);
         }
@@ -587,6 +606,10 @@ os_unmask_suspend_signal_via_ptrace(thread_id_t skip_tid)
     state->events.ready = create_event();
     state->events.go = create_event();
     state->events.done = create_event();
+    ASSERT(suspend_signal_blocked_tids == NULL);
+    ASSERT(num_suspend_signal_blocked_tids == 0);
+    ASSERT(suspend_signal_blocked_tids_capacity == 0);
+
     state->target_pid = get_process_id();
     state->skip_tid = skip_tid;
     state->suspend_sig = suspend_signum;
@@ -620,4 +643,27 @@ os_unmask_suspend_signal_via_ptrace(thread_id_t skip_tid)
     HEAP_TYPE_FREE(GLOBAL_DCONTEXT, state, ptrace_unmask_state_t, ACCT_THREAD_MGT,
                    PROTECTED);
     return ok;
+}
+
+bool
+ptrace_suspend_signal_was_blocked(thread_id_t tid)
+{
+    for (uint i = 0; i < num_suspend_signal_blocked_tids; i++) {
+        if (suspend_signal_blocked_tids[i] == tid)
+            return true;
+    }
+    return false;
+}
+
+void
+os_unmask_suspend_signal_via_ptrace_cleanup(void)
+{
+    if (suspend_signal_blocked_tids != NULL) {
+        global_heap_free(suspend_signal_blocked_tids,
+                         suspend_signal_blocked_tids_capacity *
+                             sizeof(thread_id_t) HEAPACCT(ACCT_THREAD_MGT));
+        suspend_signal_blocked_tids = NULL;
+    }
+    num_suspend_signal_blocked_tids = 0;
+    suspend_signal_blocked_tids_capacity = 0;
 }

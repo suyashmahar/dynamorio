@@ -1,5 +1,6 @@
 /* **********************************************************
  * Copyright (c) 2011-2026 Google, Inc.  All rights reserved.
+ * Copyright (c) 2026 Meta Platforms, Inc.  All rights reserved.
  * Copyright (c) 2008-2010 VMware, Inc.  All rights reserved.
  * **********************************************************/
 
@@ -561,16 +562,6 @@ static inline void
 kernel_sigfillset(kernel_sigset_t *set)
 {
     memset(set, -1, sizeof(kernel_sigset_t));
-}
-
-static inline void
-kernel_sigaddset(kernel_sigset_t *set, int _sig)
-{
-    uint sig = _sig - 1;
-    if (_NSIG_WORDS == 1)
-        set->sig[0] |= 1UL << sig;
-    else
-        set->sig[sig / _NSIG_BPW] |= 1UL << (sig % _NSIG_BPW);
 }
 
 /* XXX: how does libc do this? */

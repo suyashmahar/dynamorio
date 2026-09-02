@@ -1,5 +1,6 @@
 /* **********************************************************
  * Copyright (c) 2026 Arm Limited All rights reserved.
+ * Copyright (c) 2026 Meta Platforms, Inc.  All rights reserved.
  * **********************************************************/
 
 /*
@@ -71,6 +72,9 @@ ptrace_takeover_record_get(thread_id_t tid);
 
 bool
 ptrace_takeover_record_present(thread_id_t tid);
+
+bool
+ptrace_suspend_signal_was_blocked(thread_id_t tid);
 
 bool
 thread_in_sigtimedwait(thread_id_t tid, int suspend_sig, bool *is_in_set);

@@ -1,5 +1,6 @@
 /* **********************************************************
  * Copyright (c) 2010-2026 Google, Inc.  All rights reserved.
+ * Copyright (c) 2026 Meta Platforms, Inc.  All rights reserved.
  * Copyright (c) 2003-2010 VMware, Inc.  All rights reserved.
  * **********************************************************/
 
@@ -99,6 +100,8 @@ os_take_over_all_unknown_threads(dcontext_t *dcontext);
 #ifdef PTRACE_TAKEOVER_SUPPORTED
 bool
 os_unmask_suspend_signal_via_ptrace(thread_id_t skip_tid);
+void
+os_unmask_suspend_signal_via_ptrace_cleanup(void);
 #endif
 
 bool
