@@ -119,13 +119,19 @@ private:
         bool done;
         do {
             ZSTD_outBuffer out = { dst_buf_.data(), dst_buf_.size(), 0 };
-            size_t remaining = ZSTD_compressStream2(cctx_, &out, &in, mode);
-            if (ZSTD_isError(remaining) ||
+            size_t left_to_write = ZSTD_compressStream2(cctx_, &out, &in, mode);
+            if (ZSTD_isError(left_to_write) ||
                 !file_.write(dst_buf_.data(), static_cast<std::streamsize>(out.pos))) {
                 ok_ = false;
                 return false;
             }
-            done = mode == ZSTD_e_end ? remaining == 0 : in.pos == in.size;
+            // With ZSTD_e_continue, zstd may keep some data internally, so we are
+            // done once it has taken all our input.  With ZSTD_e_end, we are done
+            // once it has written the whole frame, including the checksum.
+            if (mode == ZSTD_e_end)
+                done = left_to_write == 0;
+            else
+                done = in.pos == in.size;
         } while (!done);
         setp(src_buf_.data(), src_buf_.data() + src_buf_.size() - 1);
         return true;
